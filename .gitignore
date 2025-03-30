@@ -1,0 +1,21 @@
+# Ignore my_documents directory
+my_documents/
+
+# Ignore Python byte-compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore virtual environment directories
+venv/
+env/
+.env/
+
+# Ignore local development settings
+.env
+.vscode/
+.idea/
+
+# Ignore OS generated files
+.DS_Store
+Thumbs.db
