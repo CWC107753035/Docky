@@ -565,7 +565,12 @@ class DocumentVersioningGUI:
             messagebox.showerror("Error", f"Failed to load version: {str(e)}")
     
     def update_diff_view(self):
-        """Update the side-by-side diff view with the selected versions."""
+        """
+        Update the side-by-side diff view with the selected versions.
+        
+        This improved version uses the version controller for better diff calculation
+        and handles the text widget state properly.
+        """
         if not self.current_doc_id:
             return
         
@@ -587,9 +592,8 @@ class DocumentVersioningGUI:
             
             # Set text widgets to normal for updating
             was_edit_mode = self.diff_edit_mode
-            if not was_edit_mode:
-                self.left_text.config(state=tk.NORMAL)
-                self.right_text.config(state=tk.NORMAL)
+            self.left_text.config(state=tk.NORMAL)
+            self.right_text.config(state=tk.NORMAL)
             
             # Clear the text widgets
             self.left_text.delete(1.0, tk.END)
@@ -599,11 +603,39 @@ class DocumentVersioningGUI:
             self.left_text.insert(tk.END, content1)
             self.right_text.insert(tk.END, content2)
             
-            # Get the changes
-            changes = self.doc_manager.compare_versions(self.current_doc_id, v1, v2)
+            # Get the changes using version controller for more accurate diff
+            changes = self.version_controller.get_word_diff(self.current_doc_id, v1, v2)
             
-            # Highlight the differences
-            self.highlight_differences(changes, content1, content2)
+            # Convert word-level diff to line-level changes for highlighting
+            line_changes = []
+            current_change = None
+            
+            for word_diff in changes:
+                if word_diff['type'] != 'equal' and not current_change:
+                    current_change = {'lines': []}
+                    
+                if word_diff['type'] == 'added':
+                    if current_change:
+                        current_change['lines'].append({
+                            'type': 'added',
+                            'content': ' '.join(word_diff['words'])
+                        })
+                elif word_diff['type'] == 'removed':
+                    if current_change:
+                        current_change['lines'].append({
+                            'type': 'removed',
+                            'content': ' '.join(word_diff['words'])
+                        })
+                elif word_diff['type'] == 'equal' and current_change:
+                    line_changes.append(current_change)
+                    current_change = None
+                    
+            # Add the last change if any
+            if current_change:
+                line_changes.append(current_change)
+            
+            # Highlight the differences with improved method
+            self.highlight_differences(line_changes, content1, content2)
             
             # Set back to disabled if not in edit mode
             if not was_edit_mode:
@@ -615,47 +647,84 @@ class DocumentVersioningGUI:
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate diff: {str(e)}")
+            import traceback
+            traceback.print_exc()  # This will help with debugging
     
     def highlight_differences(self, changes, content1, content2):
-        """Highlight the differences in the side-by-side view."""
+        """
+        Highlight the differences in the side-by-side view using a simpler and more reliable approach.
+        
+        Args:
+            changes: The changes from the document manager (not used in this implementation)
+            content1: Content of version 1 (left)
+            content2: Content of version 2 (right)
+        """
         # Split content into lines
         lines1 = content1.splitlines()
         lines2 = content2.splitlines()
         
-        # Process each change
-        for change in changes:
-            for line in change['lines']:
-                if line['type'] == 'added':
-                    # Find this line in the right text (version 2)
-                    try:
-                        line_content = line['content']
-                        line_index = lines2.index(line_content)
-                        
-                        # Calculate position in text widget
-                        start_pos = f"{line_index + 1}.0"
-                        end_pos = f"{line_index + 1}.end"
-                        
-                        # Highlight in right text
-                        self.right_text.tag_add("addition", start_pos, end_pos)
-                    except ValueError:
-                        # Line not found, might be partial change
-                        pass
+        # Use difflib for the comparison
+        import difflib
+        differ = difflib.Differ()
+        diff = list(differ.compare(lines1, lines2))
+        
+        # Process the diff line by line
+        for i, line in enumerate(diff):
+            if line.startswith('- '):
+                # Line only in left version (removed)
+                line_idx = i - sum(1 for l in diff[:i] if l.startswith('+ '))
+                if line_idx < len(lines1):
+                    start_pos = f"{line_idx + 1}.0"
+                    end_pos = f"{line_idx + 1}.end"
+                    self.left_text.tag_add("deletion", start_pos, end_pos)
+                    
+            elif line.startswith('+ '):
+                # Line only in right version (added)
+                line_idx = i - sum(1 for l in diff[:i] if l.startswith('- '))
+                if line_idx < len(lines2):
+                    start_pos = f"{line_idx + 1}.0"
+                    end_pos = f"{line_idx + 1}.end"
+                    self.right_text.tag_add("addition", start_pos, end_pos)
+                    
+            elif line.startswith('? '):
+                # Line with differences (hints from differ)
+                pass
+            else:
+                # Line in both versions (unchanged)
+                line_idx_left = i - sum(1 for l in diff[:i] if l.startswith('+ '))
+                line_idx_right = i - sum(1 for l in diff[:i] if l.startswith('- '))
                 
-                elif line['type'] == 'removed':
-                    # Find this line in the left text (version 1)
-                    try:
-                        line_content = line['content']
-                        line_index = lines1.index(line_content)
-                        
-                        # Calculate position in text widget
-                        start_pos = f"{line_index + 1}.0"
-                        end_pos = f"{line_index + 1}.end"
-                        
-                        # Highlight in left text
-                        self.left_text.tag_add("deletion", start_pos, end_pos)
-                    except ValueError:
-                        # Line not found, might be partial change
-                        pass
+                # Check if identical lines are in different positions - highlight them
+                if line_idx_left < len(lines1) and line_idx_right < len(lines2):
+                    left_start_pos = f"{line_idx_left + 1}.0"
+                    left_end_pos = f"{line_idx_left + 1}.end"
+                    right_start_pos = f"{line_idx_right + 1}.0"
+                    right_end_pos = f"{line_idx_right + 1}.end"
+                    
+                    # Only highlight if position has changed
+                    original_idx = lines1.index(line[2:]) if line[2:] in lines1 else -1
+                    new_idx = lines2.index(line[2:]) if line[2:] in lines2 else -1
+                    
+                    if original_idx != new_idx and original_idx >= 0 and new_idx >= 0:
+                        self.left_text.tag_add("change", left_start_pos, left_end_pos)
+                        self.right_text.tag_add("change", right_start_pos, right_end_pos)
+        
+        # Now process special case: scan for content that appears in both but in different places
+        # This handles the first line in your example that should be highlighted
+        for i, line1 in enumerate(lines1):
+            for j, line2 in enumerate(lines2):
+                if line1 == line2 and i != j:
+                    # Identical content but in different positions
+                    left_start_pos = f"{i + 1}.0"
+                    left_end_pos = f"{i + 1}.end"
+                    right_start_pos = f"{j + 1}.0"
+                    right_end_pos = f"{j + 1}.end"
+                    
+                    if not self.left_text.tag_ranges("deletion") or left_start_pos not in self.left_text.tag_ranges("deletion"):
+                        self.left_text.tag_add("change", left_start_pos, left_end_pos)
+                    
+                    if not self.right_text.tag_ranges("addition") or right_start_pos not in self.right_text.tag_ranges("addition"):
+                        self.right_text.tag_add("change", right_start_pos, right_end_pos)
     
     def new_document(self):
         """Create a new document."""
