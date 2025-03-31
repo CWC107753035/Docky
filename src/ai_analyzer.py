@@ -9,19 +9,41 @@ import time
 class AIDocumentAnalyzer:
     """Provides AI-powered analysis of documents and document versions."""
     
-    def __init__(self, api_key: Optional[str] = None, api_type: str = "openai"):
+    def __init__(self, api_key: Optional[str] = None, api_type: str = "ollama"):
         """
         Initialize the AI document analyzer.
         
         Args:
-            api_key: API key for the AI service
-            api_type: Type of AI API to use ("openai", "huggingface", etc.)
+            api_key: API key for the AI service (only needed for OpenAI/HuggingFace)
+            api_type: Type of AI API to use ("ollama", "openai", "huggingface")
         """
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        self.api_key = api_key
         self.api_type = api_type
+        self.ollama_host = "http://localhost:11434"
+        self.ollama_model = "llama3"  # Default model - can be changed
         
-        if not self.api_key and self.api_type == "openai":
-            print("Warning: No API key provided. Please set the OPENAI_API_KEY environment variable.")
+        if self.api_type == "openai" and not self.api_key:
+            print("Warning: No API key provided for OpenAI. Please set an API key.")
+        elif self.api_type == "huggingface" and not self.api_key:
+            print("Warning: No API key provided for Hugging Face. Please set an API key.")
+    
+    def set_ollama_model(self, model_name: str):
+        """
+        Set the Ollama model to use.
+        
+        Args:
+            model_name: Name of the model (e.g., "llama3", "mistral", etc.)
+        """
+        self.ollama_model = model_name
+    
+    def set_ollama_host(self, host: str):
+        """
+        Set the Ollama host address.
+        
+        Args:
+            host: Host address (e.g., "http://localhost:11434")
+        """
+        self.ollama_host = host
     
     def _call_openai_api(self, prompt: str, model: str = "gpt-3.5-turbo") -> str:
         """
@@ -94,6 +116,37 @@ class AIDocumentAnalyzer:
         except Exception as e:
             return f"Error: {str(e)}"
     
+    def _call_ollama_api(self, prompt: str) -> str:
+        """
+        Call the Ollama API.
+        
+        Args:
+            prompt: The prompt to send to the API
+            
+        Returns:
+            The response text
+        """
+        try:
+            data = {
+                "model": self.ollama_model,
+                "prompt": prompt,
+                "stream": False,
+                "temperature": 0.3,  # Lower temperature for more deterministic responses
+            }
+            
+            response = requests.post(
+                f"{self.ollama_host}/api/generate",
+                json=data
+            )
+            
+            if response.status_code == 200:
+                return response.json()["response"].strip()
+            else:
+                return f"Error {response.status_code}: {response.text}"
+        
+        except Exception as e:
+            return f"Error: {str(e)}"
+    
     def _call_ai_api(self, prompt: str) -> str:
         """
         Call the appropriate AI API based on the configured type.
@@ -108,6 +161,8 @@ class AIDocumentAnalyzer:
             return self._call_openai_api(prompt)
         elif self.api_type == "huggingface":
             return self._call_huggingface_api(prompt)
+        elif self.api_type == "ollama":
+            return self._call_ollama_api(prompt)
         else:
             return f"Error: Unsupported API type '{self.api_type}'"
     
@@ -160,6 +215,35 @@ class AIDocumentAnalyzer:
         
         return "\n".join(summary)
     
+    def is_ollama_available(self) -> bool:
+        """
+        Check if Ollama is available.
+        
+        Returns:
+            True if Ollama is available, False otherwise
+        """
+        try:
+            response = requests.get(f"{self.ollama_host}/api/tags")
+            return response.status_code == 200
+        except:
+            return False
+    
+    def list_available_models(self) -> List[str]:
+        """
+        List available Ollama models.
+        
+        Returns:
+            List of available model names
+        """
+        try:
+            response = requests.get(f"{self.ollama_host}/api/tags")
+            if response.status_code == 200:
+                models = response.json().get("models", [])
+                return [model["name"] for model in models]
+            return []
+        except:
+            return []
+    
     def summarize_document(self, content: str) -> str:
         """
         Generate a summary of a document.
@@ -170,8 +254,8 @@ class AIDocumentAnalyzer:
         Returns:
             Document summary
         """
-        if not self.api_key:
-            return self._fallback_analysis(content)
+        if self.api_type == "ollama" and not self.is_ollama_available():
+            return "Error: Ollama service is not available. Please ensure Ollama is running."
         
         prompt = f"""
         Please provide a concise summary of the following document. Focus on:
@@ -206,32 +290,9 @@ class AIDocumentAnalyzer:
         Returns:
             Analysis of changes
         """
-        if not self.api_key:
-            # Perform a basic diff analysis
-            diff = list(difflib.unified_diff(
-                old_content.splitlines(),
-                new_content.splitlines(),
-                lineterm='',
-                n=3
-            ))
+        if self.api_type == "ollama" and not self.is_ollama_available():
+            return "Error: Ollama service is not available. Please ensure Ollama is running."
             
-            summary = ["Basic Change Analysis:"]
-            
-            additions = 0
-            deletions = 0
-            
-            for line in diff:
-                if line.startswith('+') and not line.startswith('+++'):
-                    additions += 1
-                elif line.startswith('-') and not line.startswith('---'):
-                    deletions += 1
-            
-            summary.append(f"- {additions} lines added")
-            summary.append(f"- {deletions} lines removed")
-            summary.append(f"- {abs(additions - deletions)} net line {'increase' if additions > deletions else 'decrease'}")
-            
-            return "\n".join(summary)
-        
         # Create a diff for context
         diff_lines = list(difflib.unified_diff(
             old_content.splitlines(),
@@ -326,8 +387,8 @@ class AIDocumentAnalyzer:
         Returns:
             Improvement suggestions
         """
-        if not self.api_key:
-            return "AI improvement suggestions require an API key."
+        if self.api_type == "ollama" and not self.is_ollama_available():
+            return "Error: Ollama service is not available. Please ensure Ollama is running."
         
         prompt = f"""
         Please review the following document and provide specific suggestions for improvement. Focus on:
@@ -363,8 +424,8 @@ class AIDocumentAnalyzer:
         Returns:
             Conflict analysis and recommendation
         """
-        if not self.api_key:
-            return "Conflict resolution recommendations require an API key."
+        if self.api_type == "ollama" and not self.is_ollama_available():
+            return "Error: Ollama service is not available. Please ensure Ollama is running."
         
         # Format the conflict information for the prompt
         target_content = "\n".join(conflict_content.get('target', []))
@@ -410,6 +471,9 @@ class AIDocumentAnalyzer:
         Returns:
             Dictionary of analysis results
         """
+        if self.api_type == "ollama" and not self.is_ollama_available():
+            return {"error": "Ollama service is not available. Please ensure Ollama is running."}
+        
         results = {}
         
         for i, version in enumerate(versions):
@@ -428,9 +492,8 @@ class AIDocumentAnalyzer:
                 prev_content, _ = doc_manager.get_document(doc_id, prev_version)
                 comparison = self.compare_versions(prev_content, content)
                 
-                # Avoid rate limiting for API calls
-                if self.api_key:
-                    time.sleep(1)
+                # Small delay to prevent overloading local Ollama
+                time.sleep(0.5)
             
             # Store results
             results[version] = {
@@ -439,8 +502,7 @@ class AIDocumentAnalyzer:
                 "timestamp": metadata.get("versions", [])[version-1].get("timestamp")
             }
             
-            # Avoid rate limiting for API calls
-            if self.api_key:
-                time.sleep(1)
+            # Small delay to prevent overloading local Ollama
+            time.sleep(0.5)
         
         return results

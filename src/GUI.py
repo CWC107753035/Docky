@@ -14,6 +14,11 @@ import webbrowser
 from datetime import datetime
 from document_manager import DocumentManager
 from version_controller import VersionController
+from ai_analyzer import AIDocumentAnalyzer
+
+# Add these imports to your existing imports in GUI.py
+import threading
+from tkinter import Canvas, Frame
 
 class DocumentVersioningGUI:
     """GUI for document versioning system."""
@@ -34,6 +39,12 @@ class DocumentVersioningGUI:
         # Current document tracking
         self.current_doc_id = None
         self.current_doc_name = None
+        
+        # Initialize AI analyzer
+        self.ai_analyzer = AIDocumentAnalyzer()
+        
+        # Add a flag for AI panel visibility
+        self.ai_panel_visible = True
         
         # Edit mode tracking for comparison view
         self.diff_edit_mode = False
@@ -124,11 +135,17 @@ class DocumentVersioningGUI:
         self.diff_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.diff_frame, text="Compare")
         
+        # AI Analysis tab
+        self.ai_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.ai_frame, text="AI Analysis")
+        
         # Set up the content frame
         self.setup_content_frame()
         
         # Set up the diff frame
         self.setup_diff_frame()
+        
+        self.setup_ai_frame()
     
     def setup_content_frame(self):
         """Set up the document content view."""
@@ -157,6 +174,82 @@ class DocumentVersioningGUI:
         ttk.Button(btn_bar, text="Update Document", command=self.update_document).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_bar, text="Compare Versions", command=self.compare_versions).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_bar, text="Version History", command=self.view_history).pack(side=tk.LEFT, padx=5)
+    
+    def setup_ai_frame(self):
+        """Set up the AI analysis frame."""
+        # Main container
+        self.ai_container = ttk.Frame(self.ai_frame)
+        self.ai_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Top section - Controls
+        controls_frame = ttk.Frame(self.ai_container)
+        controls_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(controls_frame, text="AI Analysis Options:").pack(side=tk.LEFT, padx=5)
+        ttk.Button(controls_frame, text="Summarize Document", 
+                 command=self.ai_summarize_document).pack(side=tk.LEFT, padx=5)
+        ttk.Button(controls_frame, text="Suggest Improvements", 
+                 command=self.ai_suggest_improvements).pack(side=tk.LEFT, padx=5)
+        ttk.Button(controls_frame, text="Analyze Changes", 
+                 command=self.ai_analyze_changes).pack(side=tk.LEFT, padx=5)
+        
+        # Progress indicator
+        self.ai_progress_var = tk.StringVar(value="")
+        self.ai_progress_label = ttk.Label(controls_frame, textvariable=self.ai_progress_var, foreground="blue")
+        self.ai_progress_label.pack(side=tk.RIGHT, padx=10)
+        
+        # Split the rest of the container into top and bottom sections
+        self.ai_paned = ttk.PanedWindow(self.ai_container, orient=tk.VERTICAL)
+        self.ai_paned.pack(fill=tk.BOTH, expand=True)
+        
+        # Summary section (collapsible)
+        self.summary_frame = ttk.Frame(self.ai_paned)
+        self.ai_paned.add(self.summary_frame, weight=1)
+        
+        # Summary header with toggle button
+        summary_header = ttk.Frame(self.summary_frame)
+        summary_header.pack(fill=tk.X)
+        
+        self.summary_toggle_var = tk.StringVar(value="▼ AI Summary")
+        ttk.Button(summary_header, textvariable=self.summary_toggle_var, 
+                 command=self.toggle_summary).pack(side=tk.LEFT)
+        
+        # Summary content
+        self.summary_content = ttk.Frame(self.summary_frame)
+        self.summary_content.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        self.summary_text = scrolledtext.ScrolledText(self.summary_content, height=8, wrap=tk.WORD)
+        self.summary_text.pack(fill=tk.BOTH, expand=True)
+        self.summary_text.insert(tk.END, "AI summary will appear here.")
+        self.summary_text.config(state=tk.DISABLED)
+        
+        # Document with AI comments section
+        self.ai_document_frame = ttk.Frame(self.ai_paned)
+        self.ai_paned.add(self.ai_document_frame, weight=3)
+        
+        # Create a horizontal paned window for document and comments
+        self.doc_comment_paned = ttk.PanedWindow(self.ai_document_frame, orient=tk.HORIZONTAL)
+        self.doc_comment_paned.pack(fill=tk.BOTH, expand=True)
+        
+        # Document content
+        doc_frame = ttk.Frame(self.doc_comment_paned)
+        self.doc_comment_paned.add(doc_frame, weight=3)
+        
+        ttk.Label(doc_frame, text="Document Content:").pack(anchor=tk.W, padx=5, pady=2)
+        
+        self.ai_doc_text = scrolledtext.ScrolledText(doc_frame, wrap=tk.WORD)
+        self.ai_doc_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Comments panel
+        comments_frame = ttk.Frame(self.doc_comment_paned)
+        self.doc_comment_paned.add(comments_frame, weight=1)
+        
+        ttk.Label(comments_frame, text="AI Suggestions:").pack(anchor=tk.W, padx=5, pady=2)
+        
+        self.comments_text = scrolledtext.ScrolledText(comments_frame, wrap=tk.WORD, bg="#f5f5f5")
+        self.comments_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.comments_text.insert(tk.END, "AI suggestions will appear here.")
+        self.comments_text.config(state=tk.DISABLED)
     
     def setup_diff_frame(self):
         """Set up the side-by-side diff view."""
@@ -253,6 +346,17 @@ class DocumentVersioningGUI:
         self.edit_status_label = ttk.Label(self.diff_frame, textvariable=self.edit_status_var, foreground="blue")
         self.edit_status_label.pack(fill=tk.X, padx=5, pady=(0, 5), anchor=tk.W)
     
+    def toggle_summary(self):
+        """Toggle the visibility of the summary section."""
+        if self.ai_panel_visible:
+            self.summary_content.pack_forget()
+            self.summary_toggle_var.set("► AI Summary")
+            self.ai_panel_visible = False
+        else:
+            self.summary_content.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            self.summary_toggle_var.set("▼ AI Summary")
+            self.ai_panel_visible = True
+    
     def toggle_diff_edit_mode(self):
         """Toggle edit mode in the comparison view."""
         if not self.current_doc_id:
@@ -286,6 +390,42 @@ class DocumentVersioningGUI:
             
             # Refresh the view to restore highlights
             self.update_diff_view()
+    
+    def ai_summarize_document(self):
+        """Generate an AI summary of the current document."""
+        if not self.current_doc_id:
+            messagebox.showinfo("Info", "No document is currently open.")
+            return
+        
+        try:
+            # Get the current content
+            content = self.content_text.get(1.0, tk.END)
+            if not content.strip():
+                messagebox.showinfo("Info", "Document is empty.")
+                return
+            
+            # Show progress
+            self.ai_progress_var.set("Generating summary...")
+            
+            # Run in a separate thread to keep UI responsive
+            def run_analysis():
+                try:
+                    summary = self.ai_analyzer.summarize_document(content)
+                    
+                    # Update UI in main thread
+                    self.root.after(0, lambda: self.update_summary(summary))
+                except Exception as e:
+                    self.root.after(0, lambda: messagebox.showerror("Error", f"AI analysis failed: {str(e)}"))
+                finally:
+                    self.root.after(0, lambda: self.ai_progress_var.set(""))
+            
+            threading.Thread(target=run_analysis, daemon=True).start()
+            
+            # Switch to AI tab
+            self.notebook.select(self.ai_frame)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start AI analysis: {str(e)}")
     
     def save_edited_version(self):
         """Save either the left or right version as a new document version."""
@@ -335,6 +475,137 @@ class DocumentVersioningGUI:
         choice_dialog.geometry(f"+{x}+{y}")
         
         choice_dialog.wait_window()
+    
+    def update_summary(self, summary):
+        """Update the summary text with AI-generated content."""
+        # Make sure the summary section is visible
+        if not self.ai_panel_visible:
+            self.toggle_summary()
+        
+        # Update the summary text
+        self.summary_text.config(state=tk.NORMAL)
+        self.summary_text.delete(1.0, tk.END)
+        self.summary_text.insert(tk.END, summary)
+        self.summary_text.config(state=tk.DISABLED)
+        
+        # Also update the document display in the AI tab
+        self.ai_doc_text.delete(1.0, tk.END)
+        self.ai_doc_text.insert(tk.END, self.content_text.get(1.0, tk.END))
+    
+    def ai_suggest_improvements(self):
+        """Generate AI suggestions for improving the document."""
+        if not self.current_doc_id:
+            messagebox.showinfo("Info", "No document is currently open.")
+            return
+        
+        try:
+            # Get the current content
+            content = self.content_text.get(1.0, tk.END)
+            if not content.strip():
+                messagebox.showinfo("Info", "Document is empty.")
+                return
+            
+            # Show progress
+            self.ai_progress_var.set("Generating suggestions...")
+            
+            # Run in a separate thread
+            def run_analysis():
+                try:
+                    suggestions = self.ai_analyzer.suggest_improvements(content)
+                    
+                    # Update UI in main thread
+                    self.root.after(0, lambda: self.update_suggestions(suggestions))
+                except Exception as e:
+                    self.root.after(0, lambda: messagebox.showerror("Error", f"AI analysis failed: {str(e)}"))
+                finally:
+                    self.root.after(0, lambda: self.ai_progress_var.set(""))
+            
+            threading.Thread(target=run_analysis, daemon=True).start()
+            
+            # Switch to AI tab
+            self.notebook.select(self.ai_frame)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start AI analysis: {str(e)}")
+    
+    def update_suggestions(self, suggestions):
+        """Update the comments panel with AI-generated suggestions."""
+        # Update the comments text
+        self.comments_text.config(state=tk.NORMAL)
+        self.comments_text.delete(1.0, tk.END)
+        self.comments_text.insert(tk.END, suggestions)
+        self.comments_text.config(state=tk.DISABLED)
+        
+        # Also update the document display in the AI tab
+        self.ai_doc_text.delete(1.0, tk.END)
+        self.ai_doc_text.insert(tk.END, self.content_text.get(1.0, tk.END))
+    
+    def ai_analyze_changes(self):
+        """Analyze changes between versions."""
+        if not self.current_doc_id:
+            messagebox.showinfo("Info", "No document is currently open.")
+            return
+        
+        try:
+            # Get selected versions in the diff view
+            v1 = self.diff_v1_var.get()
+            v2 = self.diff_v2_var.get()
+            
+            if not v1 or not v2:
+                messagebox.showinfo("Info", "Please select versions to compare in the Compare tab first.")
+                return
+            
+            v1 = int(v1)
+            v2 = int(v2)
+            
+            # Get content of both versions
+            content1, _ = self.doc_manager.get_document(self.current_doc_id, v1)
+            content2, _ = self.doc_manager.get_document(self.current_doc_id, v2)
+            
+            # Show progress
+            self.ai_progress_var.set("Analyzing changes...")
+            
+            # Run in a separate thread
+            def run_analysis():
+                try:
+                    analysis = self.ai_analyzer.compare_versions(content1, content2)
+                    
+                    # Update UI in main thread
+                    self.root.after(0, lambda: self.update_change_analysis(analysis, content2))
+                except Exception as e:
+                    self.root.after(0, lambda: messagebox.showerror("Error", f"AI analysis failed: {str(e)}"))
+                finally:
+                    self.root.after(0, lambda: self.ai_progress_var.set(""))
+            
+            threading.Thread(target=run_analysis, daemon=True).start()
+            
+            # Switch to AI tab
+            self.notebook.select(self.ai_frame)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start AI analysis: {str(e)}")
+    
+    def update_change_analysis(self, analysis, content):
+        """Update the UI with change analysis results."""
+        # Update the summary with the analysis
+        self.summary_text.config(state=tk.NORMAL)
+        self.summary_text.delete(1.0, tk.END)
+        self.summary_text.insert(tk.END, analysis)
+        self.summary_text.config(state=tk.DISABLED)
+        
+        # Make sure the summary section is visible
+        if not self.ai_panel_visible:
+            self.toggle_summary()
+        
+        # Update the document display with the newer version
+        self.ai_doc_text.delete(1.0, tk.END)
+        self.ai_doc_text.insert(tk.END, content)
+        
+        # Clear any previous suggestions
+        self.comments_text.config(state=tk.NORMAL)
+        self.comments_text.delete(1.0, tk.END)
+        self.comments_text.insert(tk.END, "Select 'Suggest Improvements' for AI recommendations.")
+        self.comments_text.config(state=tk.DISABLED)
     
     def _open_merge_dialog(self):
         """Open a dialog to create a merged version from both text panes."""
@@ -524,6 +795,17 @@ class DocumentVersioningGUI:
             # Update content
             self.content_text.delete(1.0, tk.END)
             self.content_text.insert(tk.END, content)
+            
+            # Clear previous AI analysis
+            self.summary_text.config(state=tk.NORMAL)
+            self.summary_text.delete(1.0, tk.END)
+            self.summary_text.insert(tk.END, "AI summary will appear here.")
+            self.summary_text.config(state=tk.DISABLED)
+            
+            self.comments_text.config(state=tk.NORMAL)
+            self.comments_text.delete(1.0, tk.END)
+            self.comments_text.insert(tk.END, "AI suggestions will appear here.")
+            self.comments_text.config(state=tk.DISABLED)
             
             # Update diff version combos
             self.diff_v1_combo["values"] = versions
